@@ -17,6 +17,9 @@ wheels/
 
 # Local vector indexes / caches
 faiss_index/
+
+# PDFs uploaded through the Streamlit app
+data/uploads/
 *.faiss
 *.pkl
 

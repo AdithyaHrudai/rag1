@@ -1,6 +1,7 @@
 """LangGraph nodes for RAG workflow"""
 
 from src.state.rag_state import RAGState
+from src.node.sources import SourceRegistry
 
 class RAGNodes:
     """Contains node functions for RAG workflow"""
@@ -42,11 +43,13 @@ class RAGNodes:
         Returns:
             Updated RAG state with generated answer
         """
-        # Combine retrieved documents into context
-        context = "\n\n".join([doc.page_content for doc in state.retrieved_docs])
-        
+        # Combine retrieved documents into numbered context
+        registry = SourceRegistry()
+        context = registry.format(state.retrieved_docs, "document")
+
         # Create prompt
         prompt = f"""Answer the question based on the context.
+Cite every fact with its passage number, like [1] or [2][3].
 
 Context:
 {context}
@@ -59,5 +62,6 @@ Question: {state.question}"""
         return RAGState(
             question=state.question,
             retrieved_docs=state.retrieved_docs,
-            answer=response.content
+            answer=response.content,
+            sources=registry.finalize(response.content)
         )

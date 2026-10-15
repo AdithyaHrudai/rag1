@@ -1,7 +1,11 @@
 """LangGraph nodes for RAG workflow + ReAct Agent inside generate_content"""
 
+import os
 from typing import List, Optional
+
+import wikipedia
 from src.state.rag_state import RAGState
+from src.node.sources import SourceRegistry
 
 from langchain_core.documents import Document
 from langchain_core.tools import Tool
@@ -10,7 +14,16 @@ from langgraph.prebuilt import create_react_agent
 
 # Wikipedia tool
 from langchain_community.utilities import WikipediaAPIWrapper
-from langchain_community.tools.wikipedia.tool import WikipediaQueryRun
+
+SYSTEM_PROMPT = (
+    "You are a helpful RAG agent. The question comes with numbered passages already "
+    "retrieved from the user's documents. If they answer it, respond directly. "
+    "Otherwise call 'retriever' to search the documents with a different query, or "
+    "'wikipedia' for general knowledge the documents don't cover. "
+    "Cite every fact with the number of the passage it came from, like [1] or [2][3], "
+    "and only use numbers you were given. If no source contains the answer, say so. "
+    "Return only the final useful answer."
+)
 
 
 class RAGNodes:
@@ -19,7 +32,11 @@ class RAGNodes:
     def __init__(self, retriever, llm):
         self.retriever = retriever
         self.llm = llm
-        self._agent = None  # lazy-init agent
+        self.wikipedia = WikipediaAPIWrapper(
+            top_k_results=2, doc_content_chars_max=2000, lang="en"
+        )
+        # Wikipedia rate-limits the library's shared default User-Agent (HTTP 429)
+        wikipedia.set_user_agent(os.environ.get("USER_AGENT", "rag1-agentic-rag/0.1"))
 
     def retrieve_docs(self, state: RAGState) -> RAGState:
         """Classic retriever node"""
@@ -29,64 +46,66 @@ class RAGNodes:
             retrieved_docs=docs
         )
 
-    def _build_tools(self) -> List[Tool]:
-        """Build retriever + wikipedia tools"""
+    def _build_tools(self, registry: SourceRegistry) -> List[Tool]:
+        """Build retriever + wikipedia tools that number their results in the registry"""
 
         def retriever_tool_fn(query: str) -> str:
             docs: List[Document] = self.retriever.invoke(query)
             if not docs:
                 return "No documents found."
-            merged = []
-            for i, d in enumerate(docs[:8], start=1):
-                meta = d.metadata if hasattr(d, "metadata") else {}
-                title = meta.get("title") or meta.get("source") or f"doc_{i}"
-                merged.append(f"[{i}] {title}\n{d.page_content}")
-            return "\n\n".join(merged)
+            return registry.format(docs, "document")
+
+        def wikipedia_tool_fn(query: str) -> str:
+            try:
+                pages = self.wikipedia.load(query)
+            except Exception as e:
+                return f"Wikipedia search failed: {e}"
+            if not pages:
+                return "No Wikipedia results found."
+            return registry.format(pages, "wikipedia")
 
         retriever_tool = Tool(
             name="retriever",
-            description="Fetch passages from indexed corpus.",
+            description="Search the user's indexed documents. Returns numbered passages.",
             func=retriever_tool_fn,
-        )
-
-        wiki = WikipediaQueryRun(
-            api_wrapper=WikipediaAPIWrapper(top_k_results=3, lang="en")
         )
         wikipedia_tool = Tool(
             name="wikipedia",
-            description="Search Wikipedia for general knowledge.",
-            func=wiki.run,
+            description="Search Wikipedia for general knowledge. Returns numbered passages.",
+            func=wikipedia_tool_fn,
         )
 
         return [retriever_tool, wikipedia_tool]
 
-    def _build_agent(self):
-        """ReAct agent with tools"""
-        tools = self._build_tools()
-        system_prompt = (
-            "You are a helpful RAG agent. "
-            "Prefer 'retriever' for user-provided docs; use 'wikipedia' for general knowledge. "
-            "Return only the final useful answer."
-        )
-        self._agent = create_react_agent(self.llm, tools=tools,prompt=system_prompt)
-
     def generate_answer(self, state: RAGState) -> RAGState:
         """
         Generate answer using ReAct agent with retriever + wikipedia.
+        The agent is built per question so each answer has its own source numbering.
         """
-        if self._agent is None:
-            self._build_agent()
+        registry = SourceRegistry()
+        context = registry.format(state.retrieved_docs, "document")
+        agent = create_react_agent(
+            self.llm, tools=self._build_tools(registry), prompt=SYSTEM_PROMPT
+        )
 
-        result = self._agent.invoke({"messages": [HumanMessage(content=state.question)]})
+        content = f"Question: {state.question}\n\n"
+        if context:
+            content += f"Passages retrieved from the documents:\n\n{context}"
+        else:
+            content += "No passages were retrieved from the documents."
+
+        result = agent.invoke({"messages": [HumanMessage(content=content)]})
 
         messages = result.get("messages", [])
         answer: Optional[str] = None
         if messages:
             answer_msg = messages[-1]
             answer = getattr(answer_msg, "content", None)
+        answer = answer or "Could not generate answer."
 
         return RAGState(
             question=state.question,
             retrieved_docs=state.retrieved_docs,
-            answer=answer or "Could not generate answer."
+            answer=answer,
+            sources=registry.finalize(answer),
         )
