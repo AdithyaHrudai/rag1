@@ -8,3 +8,20 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Secrets - never commit real keys (use .env.example as the template)
+.env
+.env.*
+!.env.example
+.streamlit/secrets.toml
+
+# Local vector indexes / caches
+faiss_index/
+*.faiss
+*.pkl
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

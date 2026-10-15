@@ -1,7 +1,7 @@
 [project]
 name = "ragdemo"
 version = "0.1.0"
-description = "Add your description here"
+description = "Agentic RAG system built with LangGraph, FAISS, OpenAI and a ReAct agent (retriever + Wikipedia tools), with CLI and Streamlit interfaces"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [

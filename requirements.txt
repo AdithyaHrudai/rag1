@@ -1,10 +1,12 @@
 langchain
 langchain-community
 langchain-openai
+langchain-text-splitters
 langgraph
 openai
 faiss-cpu
 pydantic
+pypdf
 python-dotenv
 beautifulsoup4
 requests

@@ -43,36 +43,32 @@ def init_session_state():
 
 @st.cache_resource
 def initialize_rag():
-    """Initialize the RAG system (cached)"""
-    try:
-        # Initialize components
-        llm = Config.get_llm()
-        doc_processor = DocumentProcessor(
-            chunk_size=Config.CHUNK_SIZE,
-            chunk_overlap=Config.CHUNK_OVERLAP
-        )
-        vector_store = VectorStore()
-        
-        # Use default URLs
-        urls = Config.DEFAULT_URLS
-        
-        # Process documents
-        documents = doc_processor.process_urls(urls)
-        
-        # Create vector store
-        vector_store.create_vectorstore(documents)
-        
-        # Build graph
-        graph_builder = GraphBuilder(
-            retriever=vector_store.get_retriever(),
-            llm=llm
-        )
-        graph_builder.build()
-        
-        return graph_builder, len(documents)
-    except Exception as e:
-        st.error(f"Failed to initialize: {str(e)}")
-        return None, 0
+    """Initialize the RAG system (cached; failures are raised so they are not cached)"""
+    # Initialize components
+    llm = Config.get_llm()
+    doc_processor = DocumentProcessor(
+        chunk_size=Config.CHUNK_SIZE,
+        chunk_overlap=Config.CHUNK_OVERLAP
+    )
+    vector_store = VectorStore()
+    
+    # Sources: URLs from data/url.txt + PDFs in data/
+    urls = Config.get_sources()
+    
+    # Process documents
+    documents = doc_processor.process_urls(urls)
+    
+    # Create vector store
+    vector_store.create_vectorstore(documents)
+    
+    # Build graph
+    graph_builder = GraphBuilder(
+        retriever=vector_store.get_retriever(),
+        llm=llm
+    )
+    graph_builder.build()
+    
+    return graph_builder, len(documents)
 
 def main():
     """Main application"""
@@ -85,7 +81,11 @@ def main():
     # Initialize system
     if not st.session_state.initialized:
         with st.spinner("Loading system..."):
-            rag_system, num_chunks = initialize_rag()
+            try:
+                rag_system, num_chunks = initialize_rag()
+            except Exception as e:
+                st.error(f"Failed to initialize: {str(e)}")
+                rag_system, num_chunks = None, 0
             if rag_system:
                 st.session_state.rag_system = rag_system
                 st.session_state.initialized = True

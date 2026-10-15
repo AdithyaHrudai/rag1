@@ -19,12 +19,12 @@ class AgenticRAG:
         Initialize Agentic RAG system
         
         Args:
-            urls: List of URLs to process (uses defaults if None)
+            urls: List of sources (URLs / local paths) to process (uses Config.get_sources() if None)
         """
         print("🚀 Initializing Agentic RAG System...")
         
-        # Use default URLs if none provided
-        self.urls = urls or Config.DEFAULT_URLS
+        # Use configured sources (data/url.txt + PDFs in data/) if none provided
+        self.urls = urls or Config.get_sources()
         
         # Initialize components
         self.llm = Config.get_llm()
@@ -48,7 +48,7 @@ class AgenticRAG:
     
     def _setup_vectorstore(self):
         """Setup vector store with processed documents"""
-        print(f"📄 Processing {len(self.urls)} URLs...")
+        print(f"📄 Processing {len(self.urls)} sources...")
         documents = self.doc_processor.process_urls(self.urls)
         print(f"📊 Created {len(documents)} document chunks")
         
@@ -91,16 +91,8 @@ class AgenticRAG:
 
 def main():
     """Main function"""
-    # Example: Load URLs from file if exists
-    urls_file = Path("data/urls.txt")
-    urls = None
-    
-    if urls_file.exists():
-        with open(urls_file, 'r') as f:
-            urls = [line.strip() for line in f if line.strip()]
-    
-    # Initialize RAG system
-    rag = AgenticRAG(urls=urls)
+    # Initialize RAG system (sources come from data/url.txt and PDFs in data/)
+    rag = AgenticRAG()
     
     # Example questions
     example_questions = [
