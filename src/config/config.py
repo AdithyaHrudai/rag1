@@ -8,6 +8,9 @@ from langchain.chat_models import init_chat_model
 # Load environment variables
 load_dotenv()
 
+# Identify the web scraper (WebBaseLoader warns at import when USER_AGENT is unset)
+os.environ.setdefault("USER_AGENT", "rag1-agentic-rag/0.1")
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 class Config:

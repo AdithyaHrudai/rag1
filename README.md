@@ -318,7 +318,7 @@ Environment variables (in `.env`):
 |---|---|---|---|
 | `OPENAI_API_KEY` | Yes | — | Used for both the chat model and embeddings. |
 | `LLM_MODEL` | No | `openai:gpt-4o` | Any `provider:model` string accepted by LangChain's `init_chat_model`. |
-| `USER_AGENT` | No | — | Sent by `WebBaseLoader` when fetching pages; setting it silences a warning. |
+| `USER_AGENT` | No | `rag1-agentic-rag/0.1` | User-Agent sent by `WebBaseLoader` when fetching pages. |
 
 Code-level settings in [`src/config/config.py`](src/config/config.py):
 
