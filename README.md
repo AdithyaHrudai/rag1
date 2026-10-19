@@ -9,10 +9,27 @@ It ships with two front-ends:
 
 ---
 
+## Screenshots
+
+**Ask a question and inspect the sources.** Every `[n]` in the answer maps to a document page or Wikipedia article in the Sources panel, with the retrieved text.
+
+![Answer with cited sources from a PDF](docs/screenshots/02-answer-pdf-sources.png)
+
+**Web pages work the same way.** The answer below cites passages from the indexed blog post, and the panel (collapsed here) links to the source URL.
+
+![Answer with cited sources from web pages](docs/screenshots/03-answer-web-sources.png)
+
+**The home screen** shows how many chunks are indexed and lets you add your own PDFs from the sidebar.
+
+![Home screen with knowledge-base sidebar](docs/screenshots/01-home.png)
+
+---
+
 ## Table of contents
 
-1. [Features](#features)
-2. [Architecture](#architecture)
+1. [Screenshots](#screenshots)
+2. [Features](#features)
+3. [Architecture](#architecture)
    - [High-level overview](#high-level-overview)
    - [Ingestion pipeline](#1-ingestion-pipeline)
    - [Vector store, persistence and retrieval](#2-vector-store-persistence-and-retrieval)
@@ -22,15 +39,15 @@ It ships with two front-ends:
    - [PDF upload](#6-pdf-upload)
    - [State model](#7-state-model)
    - [End-to-end request lifecycle](#8-end-to-end-request-lifecycle)
-3. [Project structure](#project-structure)
-4. [Getting started](#getting-started)
-5. [Configuration](#configuration)
-6. [Usage](#usage)
-7. [Using your own data](#using-your-own-data)
-8. [Customisation](#customisation)
-9. [Security](#security)
-10. [Limitations and notes](#limitations-and-notes)
-11. [Tech stack](#tech-stack)
+4. [Project structure](#project-structure)
+5. [Getting started](#getting-started)
+6. [Configuration](#configuration)
+7. [Usage](#usage)
+8. [Using your own data](#using-your-own-data)
+9. [Customisation](#customisation)
+10. [Security](#security)
+11. [Limitations and notes](#limitations-and-notes)
+12. [Tech stack](#tech-stack)
 
 ---
 
@@ -40,13 +57,14 @@ It ships with two front-ends:
 - **PDF upload in the UI** — add PDFs from the Streamlit sidebar; they are chunked, embedded and searchable immediately, with no restart.
 - **Persistent vector index** — the FAISS index is saved to disk and reloaded on start, so documents are only embedded once. It is rebuilt automatically when the sources change.
 - **Chunking** — `RecursiveCharacterTextSplitter` (500 characters, 50 overlap by default).
-- **Semantic search** — OpenAI embeddings (`text-embedding-3-small` by default) in a **FAISS** index.
+- **Semantic search** — free local embeddings (FastEmbed, `BAAI/bge-small-en-v1.5` by default, no API key) in a **FAISS** index.
 - **Graph-based orchestration** — a typed **LangGraph** `StateGraph` with a `retriever` node and a `responder` node.
 - **Agentic answering** — the responder is a LangGraph prebuilt **ReAct agent** (`create_react_agent`) that receives the retrieved passages and can call two tools:
   - `retriever` — searches your documents again with its own query
   - `wikipedia` — searches Wikipedia for general knowledge
 - **Cited answers** — every passage (document chunk or Wikipedia article) gets a number; the answer cites them as `[n]`, and the UI shows which sources were cited and which were only retrieved.
-- **Pluggable LLM** — any chat model supported by LangChain's `init_chat_model` (default `openai:gpt-4o`).
+- **Free LLM via Gemini** — chat runs on Google Gemini's free tier (default `gemini-2.5-flash`); any Gemini model that supports tool calling works.
+- **Tested** — unit tests for the citation logic and configuration, run in CI on every push.
 - **Secrets kept out of git** — API keys are read from a local `.env` that is git-ignored; `.env.example` is the template.
 
 ---
@@ -65,7 +83,7 @@ flowchart LR
 
     subgraph Ingestion["Ingestion"]
         DP["DocumentProcessor<br/>load + split"]
-        EMB["OpenAIEmbeddings"]
+        EMB["FastEmbedEmbeddings<br/>(local)"]
         VS[("FAISS index<br/>saved in faiss_index/")]
     end
 
@@ -80,7 +98,7 @@ flowchart LR
     end
 
     UI["Streamlit (streamlit_app.py)<br/>CLI (main.py)"]
-    LLM["Chat LLM<br/>openai:gpt-4o"]
+    LLM["Chat LLM<br/>Gemini gemini-2.5-flash"]
 
     U --> DP
     P --> DP
@@ -141,11 +159,11 @@ Out of the box the corpus is:
 
 Implemented in [`src/vectorstore/vectorstore.py`](src/vectorstore/vectorstore.py) and [`src/rag_system.py`](src/rag_system.py).
 
-- `VectorStore` wraps a FAISS index built with `OpenAIEmbeddings(model=EMBEDDING_MODEL)`.
+- `VectorStore` wraps a FAISS index built with `FastEmbedEmbeddings(model_name=EMBEDDING_MODEL)`.
 - `create_vectorstore(documents)` embeds every chunk with `FAISS.from_documents(...)`; `add_documents(documents)` embeds and appends new chunks to the existing index.
 - The retriever (`as_retriever()`) runs a similarity search and returns the **top 4** chunks. Because it wraps the same index object, chunks added later are searchable immediately.
 
-**Persistence.** Embedding is the slow and paid part of indexing, so the index is saved and reused:
+**Persistence.** Embedding is the slow part of indexing, so the index is saved and reused:
 
 ```mermaid
 flowchart TD
@@ -190,7 +208,7 @@ Implemented in [`src/node/reactnode.py`](src/node/reactnode.py). This is what ma
 sequenceDiagram
     participant N as responder node
     participant Ag as ReAct agent
-    participant M as LLM (gpt-4o)
+    participant M as LLM (Gemini)
     participant R as retriever tool
     participant W as wikipedia tool
 
@@ -214,9 +232,10 @@ sequenceDiagram
 - **Tools** (`_build_tools`):
   - `retriever` — searches the FAISS index with the agent's own query (often a rephrasing of the question).
   - `wikipedia` — `WikipediaAPIWrapper(top_k_results=2, doc_content_chars_max=2000)`; returns the top articles with their titles and URLs. The app sets a proper User-Agent, because Wikipedia rate-limits the library's generic default one.
-- **System prompt** — tells the agent to answer from the given passages when possible, otherwise use `retriever` or `wikipedia`, to cite every fact as `[n]` using only the numbers it was given, and to say so when no source contains the answer.
+- **System prompt** — tells the agent to answer from the given passages when they are enough, otherwise to use `retriever` or `wikipedia` (at most two tool calls), to cite every fact as `[n]` using only the numbers it was given, and to say it could not find the answer only after trying the tools.
+- **Step limit** — the agent runs with a recursion limit (`MAX_AGENT_STEPS`), so a model that keeps searching still ends with an answer and the free-tier API budget is protected.
 - **Built per question** — the agent and its tools are created for each question so that each answer has its own source numbering (safe when several Streamlit users ask at once).
-- **Answer extraction** — the content of the agent's last message becomes `answer`; if there is none, the fallback is `"Could not generate answer."`.
+- **Answer extraction** — the text of the agent's last message becomes `answer`. Some models (Gemini included) return a list of content blocks instead of a string, so `message_text()` in `sources.py` flattens either form; if there is no text, the fallback is `"Could not generate answer."`.
 
 A simpler, non-agentic responder is kept in [`src/node/nodes.py`](src/node/nodes.py): it puts the numbered chunks into a single prompt and makes one LLM call, with the same citation format. See [Customisation](#customisation) to switch to it.
 
@@ -235,7 +254,7 @@ In deep learning, the transformer is a family of artificial neural network archi
 ```
 
 - Numbers are assigned in the order passages are first seen; a passage retrieved twice keeps its original number.
-- After the answer is generated, `finalize()` finds the `[n]` references in it and marks those sources as `cited`.
+- After the answer is generated, `finalize()` finds the references in it — `[1]`, `[2][3]` and grouped forms such as `[2, 4]` — and marks those sources as `cited`.
 - Each source is returned as `{id, type, title, location, content, cited}`, where `type` is `document` or `wikipedia` and `location` is a page number or URL.
 - Streamlit shows a **Sources** panel under each answer: cited sources first, then the ones that were retrieved but not used. The CLI prints the cited sources after the answer.
 
@@ -266,12 +285,12 @@ Each node receives the current state and returns a new `RAGState` with its field
 
 ### 8. End-to-end request lifecycle
 
-1. **Startup** — `.env` is loaded; `Config.get_llm()` checks `OPENAI_API_KEY` and initialises the chat model.
-2. **Index** — if `faiss_index/` matches the current sources it is loaded; otherwise sources → `DocumentProcessor` → chunks → `OpenAIEmbeddings` → FAISS → saved.
+1. **Startup** — `.env` is loaded; `Config.get_llm()` checks `GOOGLE_API_KEY` and initialises the Gemini chat model.
+2. **Index** — if `faiss_index/` matches the current sources it is loaded; otherwise sources → `DocumentProcessor` → chunks → `FastEmbedEmbeddings` → FAISS → saved.
 3. **Graph compile** — `GraphBuilder(retriever, llm).build()`.
 4. **Question** — the user asks in Streamlit or the CLI.
 5. **`retriever` node** — the top 4 similar chunks are stored in `retrieved_docs`.
-6. **`responder` node** — the chunks are numbered and given to the ReAct agent, which answers directly or loops LLM → tool call → observation until it can answer, citing `[n]`.
+6. **`responder` node** — the chunks are numbered and given to the ReAct agent, which answers directly or loops LLM → tool call → observation (within the step limit) until it can answer, citing `[n]`.
 7. **Output** — the answer plus its numbered sources; Streamlit also shows the response time and the last 3 searches.
 
 ---
@@ -303,11 +322,15 @@ rag1/
 │   │   └── sources.py          # SourceRegistry: numbers passages and tracks citations
 │   └── graph_builder/
 │       └── graph_builder.py    # LangGraph StateGraph: retriever -> responder -> END
+├── tests/                      # pytest unit tests (citations, config) - no API key needed
+├── docs/screenshots/           # Screenshots used in this README
+├── .github/workflows/tests.yml # CI: runs pytest on every push and pull request
 ├── .env.example                # Template for your local .env (no real secrets)
 ├── .gitignore                  # Ignores .env, virtualenvs, caches, index, uploads
 ├── pyproject.toml              # Project metadata + dependencies (uv)
 ├── uv.lock                     # Locked dependency versions (uv)
 ├── requirements.txt            # pip-installable dependency list
+├── requirements-dev.txt        # Test dependencies (pytest)
 └── .python-version             # Python 3.13
 ```
 
@@ -318,8 +341,8 @@ rag1/
 ### Prerequisites
 
 - **Python 3.13** (see `.python-version` / `pyproject.toml`)
-- An **OpenAI API key** — <https://platform.openai.com/api-keys>
-- Internet access (OpenAI API, the indexed web pages, and Wikipedia)
+- A **free Gemini API key** — <https://aistudio.google.com/apikey> (Google account, no credit card needed)
+- Internet access (Gemini API, the indexed web pages, and Wikipedia; the embedding model is downloaded once on first run, then runs locally)
 
 ### 1. Clone
 
@@ -360,7 +383,7 @@ cp .env.example .env
 Then edit `.env`:
 
 ```env
-OPENAI_API_KEY=sk-...your key...
+GOOGLE_API_KEY=...your key...
 ```
 
 `.env` is listed in `.gitignore` and must never be committed.
@@ -373,9 +396,9 @@ Environment variables (in `.env`):
 
 | Variable | Required | Default | Purpose |
 |---|---|---|---|
-| `OPENAI_API_KEY` | Yes | — | Used for both the chat model and embeddings. |
-| `LLM_MODEL` | No | `openai:gpt-4o` | Any `provider:model` string accepted by LangChain's `init_chat_model`. |
-| `EMBEDDING_MODEL` | No | `text-embedding-3-small` | OpenAI embedding model. Changing it rebuilds the index on the next start. |
+| `GOOGLE_API_KEY` | Yes | — | Used for the chat model. Embeddings run locally and need no key. |
+| `LLM_MODEL` | No | `gemini-2.5-flash` | Any Gemini chat model that supports tool calling. |
+| `EMBEDDING_MODEL` | No | `BAAI/bge-small-en-v1.5` | FastEmbed model name (runs locally). Changing it rebuilds the index on the next start. |
 | `USER_AGENT` | No | `rag1-agentic-rag/0.1 (https://github.com/AdithyaHrudai/rag1)` | User-Agent sent when fetching web pages and Wikipedia. |
 
 Code-level settings in [`src/config/config.py`](src/config/config.py):
@@ -436,6 +459,15 @@ for s in result["sources"]:
 
 `rag.ask(question)` does the same and prints the answer and its cited sources.
 
+### Tests
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest -q
+```
+
+The unit tests cover citation handling and configuration and need no API key or network. The same command runs in GitHub Actions on every push and pull request.
+
 ---
 
 ## Using your own data
@@ -451,11 +483,11 @@ After editing `url.txt` or the files in `data/` by hand, restart the app: the ch
 
 ## Customisation
 
-- **Change the LLM** — set `LLM_MODEL` in `.env` (e.g. `openai:gpt-4o-mini`). Other providers need their LangChain integration package and API key installed.
-- **Change the embedding model** — set `EMBEDDING_MODEL` in `.env` (e.g. `text-embedding-3-large`); the index is rebuilt automatically.
+- **Change the LLM** — set `LLM_MODEL` in `.env` (e.g. `gemini-2.5-flash-lite` has its own free quota but rarely uses the tools; see [Limitations](#limitations-and-notes)). Other providers need `Config.get_llm()` changed and their LangChain integration package installed.
+- **Change the embedding model** — set `EMBEDDING_MODEL` in `.env` (e.g. `BAAI/bge-base-en-v1.5`); the index is rebuilt automatically.
 - **Use the simple (non-agentic) responder** — in `src/graph_builder/graph_builder.py` change
   `from src.node.reactnode import RAGNodes` to `from src.node.nodes import RAGNodes`.
-- **Add tools** — add more `Tool` objects in `RAGNodes._build_tools()` in `src/node/reactnode.py`; use `registry.format(docs, ...)` so their results are numbered and citable.
+- **Add tools** — add more `StructuredTool` objects (typed arguments keep Gemini's function calling reliable) in `RAGNodes._build_tools()` in `src/node/reactnode.py`; use `registry.format(docs, ...)` so their results are numbered and citable.
 - **Tune retrieval** — e.g. `self.vectorstore.as_retriever(search_kwargs={"k": 6})` in `src/vectorstore/vectorstore.py`.
 - **Tune chunking** — change `CHUNK_SIZE` / `CHUNK_OVERLAP` in `Config` (the index is rebuilt automatically).
 - **Force a full rebuild** — delete the `faiss_index/` folder.
@@ -467,7 +499,7 @@ After editing `url.txt` or the files in `data/` by hand, restart the app: the ch
 - API keys are loaded from `.env` with `python-dotenv` and are **never** hard-coded.
 - `.env` (and any `.env.*` other than `.env.example`, plus `.streamlit/secrets.toml`) is git-ignored.
 - `.env.example` documents the required variables with placeholder values only.
-- If a key is ever committed or shared, **revoke it immediately** in the OpenAI dashboard and create a new one — removing the file from git does not make an exposed key safe again.
+- If a key is ever committed or shared, **revoke it immediately** in Google AI Studio and create a new one — removing the file from git does not make an exposed key safe again.
 - `faiss_index/index.pkl` is loaded with pickle (`allow_dangerous_deserialization=True`). That is safe for an index this app wrote itself; never load index files from an untrusted source.
 - Uploaded PDFs and the saved index stay on your machine and are git-ignored.
 - The Streamlit app is meant for local use; it has no authentication, so do not expose it publicly with your key configured.
@@ -478,6 +510,8 @@ After editing `url.txt` or the files in `data/` by hand, restart the app: the ch
 
 - Web pages are fetched live when the index is built; if a page changes later, restart after deleting `faiss_index/` to pick up the new content (URL changes are only detected when the URL list itself changes).
 - Each question can trigger several LLM calls when the agent decides to use tools.
+- **Gemini free-tier limits.** The free tier is capped per model and per day (about 20 requests/day for `gemini-2.5-flash` at the time of writing), and a tool-using question can make 3-5 calls. When the quota is used up you get a `429 RESOURCE_EXHAUSTED` message in the UI; wait for the reset or point `LLM_MODEL` at another Gemini model, which has its own quota. The agent is limited to two tool calls per question to keep usage down.
+- **Model choice matters for the agent.** Smaller models such as `gemini-2.5-flash-lite` often answer "not found" instead of calling the Wikipedia or retriever tools. Use a full Flash-class model if you want the agentic behaviour.
 - Answers may combine your documents with Wikipedia content; the Sources panel shows which is which.
 - Scanned PDFs without a text layer can't be indexed (no OCR).
 - Uploaded files can't be removed from the UI; delete them from `data/uploads/` and restart to rebuild the index without them.
@@ -489,7 +523,8 @@ After editing `url.txt` or the files in `data/` by hand, restart the app: the ch
 | Layer | Library |
 |---|---|
 | Orchestration | LangGraph (`StateGraph`, `create_react_agent`) |
-| LLM / embeddings | OpenAI via `langchain-openai` / `init_chat_model` |
+| LLM | Gemini via `langchain-google-genai` (`ChatGoogleGenerativeAI`) |
+| Embeddings | FastEmbed (local ONNX) via `langchain-community` |
 | Vector store | FAISS (`faiss-cpu`), saved with `save_local` / `load_local` |
 | Loaders | `langchain-community` (`WebBaseLoader`, `PyPDFLoader`, `PyPDFDirectoryLoader`, `TextLoader`), BeautifulSoup, pypdf |
 | Splitting | `langchain-text-splitters` |
