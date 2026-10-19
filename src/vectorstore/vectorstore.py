@@ -3,20 +3,20 @@
 from pathlib import Path
 from typing import List, Union
 from langchain_community.vectorstores import FAISS
-from langchain_openai import OpenAIEmbeddings
+from langchain_community.embeddings import FastEmbedEmbeddings
 from langchain_core.documents import Document
 
 class VectorStore:
     """Manages vector store operations"""
 
-    def __init__(self, embedding_model: str = "text-embedding-3-small"):
+    def __init__(self, embedding_model: str = "BAAI/bge-small-en-v1.5"):
         """
-        Initialize vector store with OpenAI embeddings
+        Initialize vector store with local (FastEmbed) embeddings
 
         Args:
-            embedding_model: OpenAI embedding model name
+            embedding_model: FastEmbed model name (downloaded once, runs locally)
         """
-        self.embedding = OpenAIEmbeddings(model=embedding_model)
+        self.embedding = FastEmbedEmbeddings(model_name=embedding_model)
         self.vectorstore = None
         self.retriever = None
 

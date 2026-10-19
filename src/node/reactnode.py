@@ -5,23 +5,28 @@ from typing import List, Optional
 
 import wikipedia
 from src.state.rag_state import RAGState
-from src.node.sources import SourceRegistry
+from src.node.sources import SourceRegistry, message_text
 
 from langchain_core.documents import Document
-from langchain_core.tools import Tool
+from langchain_core.tools import StructuredTool
 from langchain_core.messages import HumanMessage
 from langgraph.prebuilt import create_react_agent
 
 # Wikipedia tool
 from langchain_community.utilities import WikipediaAPIWrapper
 
+MAX_AGENT_STEPS = 9
+
 SYSTEM_PROMPT = (
     "You are a helpful RAG agent. The question comes with numbered passages already "
-    "retrieved from the user's documents. If they answer it, respond directly. "
-    "Otherwise call 'retriever' to search the documents with a different query, or "
-    "'wikipedia' for general knowledge the documents don't cover. "
+    "retrieved from the user's documents. If they fully answer it, respond directly. "
+    "If they do not, you MUST use your tools before answering: call 'retriever' to search "
+    "the documents again with a different query, and call 'wikipedia' for general knowledge "
+    "the documents don't cover. "
     "Cite every fact with the number of the passage it came from, like [1] or [2][3], "
-    "and only use numbers you were given. If no source contains the answer, say so. "
+    "and only use numbers you were given. Only say that you could not find the answer "
+    "after you have tried the tools and they returned nothing relevant. "
+    "Use at most two tool calls in total, then answer with the best evidence you have. "
     "Return only the final useful answer."
 )
 
@@ -46,7 +51,7 @@ class RAGNodes:
             retrieved_docs=docs
         )
 
-    def _build_tools(self, registry: SourceRegistry) -> List[Tool]:
+    def _build_tools(self, registry: SourceRegistry) -> List[StructuredTool]:
         """Build retriever + wikipedia tools that number their results in the registry"""
 
         def retriever_tool_fn(query: str) -> str:
@@ -64,15 +69,17 @@ class RAGNodes:
                 return "No Wikipedia results found."
             return registry.format(pages, "wikipedia")
 
-        retriever_tool = Tool(
+        # Typed single-argument schemas: Gemini's function calling is unreliable with the
+        # untyped schema the legacy Tool wrapper produces (MALFORMED_FUNCTION_CALL)
+        retriever_tool = StructuredTool.from_function(
+            func=retriever_tool_fn,
             name="retriever",
             description="Search the user's indexed documents. Returns numbered passages.",
-            func=retriever_tool_fn,
         )
-        wikipedia_tool = Tool(
+        wikipedia_tool = StructuredTool.from_function(
+            func=wikipedia_tool_fn,
             name="wikipedia",
             description="Search Wikipedia for general knowledge. Returns numbered passages.",
-            func=wikipedia_tool_fn,
         )
 
         return [retriever_tool, wikipedia_tool]
@@ -94,13 +101,16 @@ class RAGNodes:
         else:
             content += "No passages were retrieved from the documents."
 
-        result = agent.invoke({"messages": [HumanMessage(content=content)]})
+        # Each tool round costs two graph steps; the limit keeps a free-tier API call budget in check
+        result = agent.invoke(
+            {"messages": [HumanMessage(content=content)]},
+            {"recursion_limit": MAX_AGENT_STEPS},
+        )
 
         messages = result.get("messages", [])
-        answer: Optional[str] = None
+        answer = ""
         if messages:
-            answer_msg = messages[-1]
-            answer = getattr(answer_msg, "content", None)
+            answer = message_text(getattr(messages[-1], "content", None))
         answer = answer or "Could not generate answer."
 
         return RAGState(

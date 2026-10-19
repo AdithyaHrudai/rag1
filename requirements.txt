@@ -1,9 +1,9 @@
 langchain
 langchain-community
-langchain-openai
+langchain-google-genai
 langchain-text-splitters
 langgraph
-openai
+fastembed
 faiss-cpu
 pydantic
 pypdf

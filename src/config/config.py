@@ -3,7 +3,7 @@
 import os
 from pathlib import Path
 from dotenv import load_dotenv
-from langchain.chat_models import init_chat_model
+from langchain_google_genai import ChatGoogleGenerativeAI
 
 # Load environment variables
 load_dotenv()
@@ -16,12 +16,12 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 class Config:
     """Configuration class for RAG system"""
 
-    # API Keys
-    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+    # API Keys (Gemini has a free tier: https://aistudio.google.com/apikey)
+    GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
-    # Model Configuration
-    LLM_MODEL = os.getenv("LLM_MODEL", "openai:gpt-4o")
-    EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
+    # Model Configuration (chat runs on Gemini, embeddings run locally and need no key)
+    LLM_MODEL = os.getenv("LLM_MODEL", "gemini-2.5-flash")
+    EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
 
     # Document Processing
     CHUNK_SIZE = 500
@@ -57,9 +57,14 @@ class Config:
     @classmethod
     def get_llm(cls):
         """Initialize and return the LLM model"""
-        if not cls.OPENAI_API_KEY:
+        if not cls.GOOGLE_API_KEY:
             raise RuntimeError(
-                "OPENAI_API_KEY is not set. Copy .env.example to .env and add your key."
+                "GOOGLE_API_KEY is not set. Copy .env.example to .env and add your key."
             )
-        os.environ["OPENAI_API_KEY"] = cls.OPENAI_API_KEY
-        return init_chat_model(cls.LLM_MODEL)
+        # Few retries: a quota error (429) won't clear by retrying, and the UI should fail fast
+        return ChatGoogleGenerativeAI(
+            model=cls.LLM_MODEL,
+            google_api_key=cls.GOOGLE_API_KEY,
+            temperature=0,
+            max_retries=2,
+        )

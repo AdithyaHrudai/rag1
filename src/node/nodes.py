@@ -1,7 +1,7 @@
 """LangGraph nodes for RAG workflow"""
 
 from src.state.rag_state import RAGState
-from src.node.sources import SourceRegistry
+from src.node.sources import SourceRegistry, message_text
 
 class RAGNodes:
     """Contains node functions for RAG workflow"""
@@ -58,10 +58,11 @@ Question: {state.question}"""
         
         # Generate response
         response = self.llm.invoke(prompt)
-        
+        answer = message_text(response.content) or "Could not generate answer."
+
         return RAGState(
             question=state.question,
             retrieved_docs=state.retrieved_docs,
-            answer=response.content,
-            sources=registry.finalize(response.content)
+            answer=answer,
+            sources=registry.finalize(answer)
         )

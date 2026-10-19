@@ -6,6 +6,11 @@ from pathlib import Path
 # Add src to path
 sys.path.append(str(Path(__file__).parent))
 
+# Let the emoji in the output print on Windows consoles that default to cp1252
+for stream in (sys.stdout, sys.stderr):
+    if hasattr(stream, "reconfigure"):
+        stream.reconfigure(encoding="utf-8")
+
 from src.rag_system import AgenticRAG
 
 def main():

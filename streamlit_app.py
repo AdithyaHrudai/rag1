@@ -38,6 +38,8 @@ def init_session_state():
         st.session_state.initialized = False
     if 'history' not in st.session_state:
         st.session_state.history = []
+    if 'last_result' not in st.session_state:
+        st.session_state.last_result = None
 
 @st.cache_resource
 def initialize_rag():
@@ -141,27 +143,39 @@ def main():
         if st.session_state.rag_system:
             with st.spinner("Searching..."):
                 start_time = time.time()
+                try:
+                    result = st.session_state.rag_system.query(question)
+                except Exception as e:
+                    st.session_state.last_result = None
+                    st.error(
+                        f"Could not get an answer: {e}\n\n"
+                        "Check that GOOGLE_API_KEY in .env is valid, or wait a minute if you hit the free-tier rate limit."
+                    )
+                else:
+                    elapsed_time = time.time() - start_time
+                    st.session_state.last_result = {
+                        'question': question,
+                        'answer': result['answer'],
+                        'sources': result.get('sources', []),
+                        'time': elapsed_time,
+                    }
+                    st.session_state.history.append({
+                        'question': question,
+                        'answer': result['answer'],
+                        'time': elapsed_time
+                    })
 
-                # Get answer
-                result = st.session_state.rag_system.query(question)
+    # Show the latest answer (kept across reruns, e.g. after uploading a PDF)
+    last = st.session_state.last_result
+    if last:
+        st.markdown("### 💡 Answer")
+        st.caption(f"Q: {last['question']}")
+        st.success(last['answer'])
 
-                elapsed_time = time.time() - start_time
+        # Show the passages and Wikipedia pages the answer is based on
+        show_sources(last['sources'])
 
-                # Add to history
-                st.session_state.history.append({
-                    'question': question,
-                    'answer': result['answer'],
-                    'time': elapsed_time
-                })
-
-                # Display answer
-                st.markdown("### 💡 Answer")
-                st.success(result['answer'])
-
-                # Show the passages and Wikipedia pages the answer is based on
-                show_sources(result.get('sources', []))
-
-                st.caption(f"⏱️ Response time: {elapsed_time:.2f} seconds")
+        st.caption(f"⏱️ Response time: {last['time']:.2f} seconds")
 
     # Show history
     if st.session_state.history:

@@ -6,7 +6,23 @@ from typing import List
 
 from langchain_core.documents import Document
 
-_CITATION_RE = re.compile(r"\[(\d+)\]")
+# Matches [1], [2][3] and grouped forms such as [2, 4] or [1,2,3]
+_CITATION_RE = re.compile(r"\[(\d+(?:\s*[,;]\s*\d+)*)\]")
+
+
+def message_text(content) -> str:
+    """Flatten a chat message's content to plain text (some models return a list of content blocks)"""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict) and block.get("type") == "text":
+                parts.append(block.get("text", ""))
+        return "".join(parts)
+    return ""
 
 
 def describe_document(doc: Document) -> tuple:
@@ -68,7 +84,11 @@ class SourceRegistry:
 
     def finalize(self, answer: str) -> List[dict]:
         """Mark which sources the answer actually cites and return all of them"""
-        cited = {int(n) for n in _CITATION_RE.findall(answer or "")}
+        cited = {
+            int(n)
+            for group in _CITATION_RE.findall(answer or "")
+            for n in re.split(r"\s*[,;]\s*", group)
+        }
         for source in self._sources:
             source["cited"] = source["id"] in cited
         return self._sources
